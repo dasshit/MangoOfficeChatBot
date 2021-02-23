@@ -28,26 +28,31 @@ def messageCreate(chat_id: str, payload: dict, messageType: str, replyTo: str = 
     return data
 
 
-def eventCheck(event):
-    if event.type == '401' or event.type == '405':
-        return True if [event.message.outgoing is False,
-                        event.message.type == 'text',
-                        event.message.account != 'mango@telecom.service'].count(True) == 3 else False
+def eventCheck(event, purposedEventType):
+    if event.type in ['401', '405', '808']:
+        if event.message.type != 'sms':
+            return True if [event.type == purposedEventType, event.message.outgoing is False,
+                            event.message.type == 'text',
+                            event.message.account != 'mango@telecom.service'].count(True) == 4 else False
+        else:
+            return True if event.type == purposedEventType else False
     else:
-        return False
+        return True if event.type == purposedEventType else False
 
 
 class MangoBot:
     __slots__ = ['authUrl', 'mainUrl', 'apiVksUrl', 'token', 'lastSid', 'UserAgent', 'login', 'password',
                  'basic_token', 'fsUrl', 'roster', 'deviceId', 'header', 'fsHeader', 'logger', 'handlersDict',
                  'authToken', 'uploadPath', 'clientApiUrl', 'clientApiKey', 'addressBookUrl', 'messageFactoryBuffer',
-                 'RmqCallbackFunction']
+                 'RmqCallbackFunction', 'webchatFactoryBuffer']
 
     def __init__(self, login: str = environ.get('login'), password: str = environ.get('password'),
                  authUrl: str = config.urls.authUrl, mainUrl: str = config.urls.chatApiUrl,
                  fsUrl: str = config.urls.chatFsUrl, apiVksUrl: str = config.urls.apiVksUrl,
                  clientApiUrl: str = config.urls.clientApiUrl, addressBookUrl: str = config.urls.addressBookUrl,
-                 UserAgent: str = config.userAgent.format(uuid4())):
+                 UserAgent: str = config.userAgent.format(uuid4()), basic_token: str = None,
+                 lastSid: str = None, deviceId: str = None, roster: tuple[Any, Any] = None,
+                 header: dict = None, fsHeader: dict = None):
         from loguru import logger
         self.authUrl: str = authUrl
         self.mainUrl: str = mainUrl
@@ -55,20 +60,21 @@ class MangoBot:
         self.fsUrl: str = fsUrl
         self.apiVksUrl: str = apiVksUrl
         self.addressBookUrl: str = addressBookUrl
-        self.lastSid: Optional[str, None] = None
+        self.lastSid: str = lastSid
         self.UserAgent: str = UserAgent
         self.login: str = login
         self.password: str = password
         self.authToken: Optional[str, None] = None
         self.clientApiKey: Optional[str, None] = None
-        self.basic_token: Optional[str, None] = None
-        self.roster: Optional[tuple[Any, Any], None] = None
-        self.deviceId: Optional[str, None] = None
-        self.header: Optional[dict, None] = None
-        self.fsHeader: Optional[dict, None] = None
+        self.basic_token: str = basic_token
+        self.roster: tuple[Any, Any] = roster
+        self.deviceId: str = deviceId
+        self.header: dict = header
+        self.fsHeader: dict = fsHeader
         self.logger: logger = logger
         self.uploadPath: str = '/upload_chunk.php?toAccount={}&localId={}'
         self.messageFactoryBuffer: list[dict] = []
+        self.webchatFactoryBuffer: list[dict] = []
         self.handlersDict: list[dict] = []
         self.RmqCallbackFunction: list = []
         self.coldStart()
@@ -97,7 +103,6 @@ class MangoBot:
                 self.logger.exception(failedResponseLog.format(result.status_code, result.headers, result.text))
             else:
                 self.logger.info(successResponseLog.format(result.status_code, result.headers))
-                self.logger.debug(result.text)
         if args[0] == 'pollEvents':
             self.lastSid: str = classDeJson.data.lastSid
         else:
@@ -195,8 +200,8 @@ class MangoBot:
     def getCompanyByPhone(self, number: str) -> tuple[Any, Any]:
         return self._request('getCompanyByPhone', {"number": number})
 
-    def callsGet(self, told: str, limit: int = 100) -> tuple[Any, Any]:
-        return self._request('calls/get', {"toId": told, "limit": limit})
+    def callsGet(self, toId: str, limit: int = 100) -> tuple[Any, Any]:
+        return self._request('calls/get', {"toId": toId, "limit": limit})
 
     def callsRecent(self, limit: int = 100) -> tuple[Any, Any]:
         return self._request('calls/recent', {"limit": limit})
@@ -205,23 +210,23 @@ class MangoBot:
         return self._request('calls/history', {"numbers": numbers, "limit": limit})
 
     def callsSearch(self, query: str, numbers: list[str] = ('', ''),
-                    onlyMissed: bool = False, told: str = None, limit: int = 50) -> tuple[Any, Any]:
-        if told is None:
-            told = self.lastSid
+                    onlyMissed: bool = False, toId: str = None, limit: int = 50) -> tuple[Any, Any]:
+        if toId is None:
+            toId = self.lastSid
         return self._request('calls/search', {
-            "query": query, "numbers": numbers, "onlyMissed": onlyMissed, "told": told, "limit": limit
+            "query": query, "numbers": numbers, "onlyMissed": onlyMissed, "toId": toId, "limit": limit
         })
 
     def callsRemove(self, sid: str) -> tuple[Any, Any]:
         return self._request('calls/remove', {"sid": sid})
 
-    def messageHistory(self, talkers: str, told: str = None,
+    def messageHistory(self, talkers: str, toId: str = None,
                        limit: int = 20, latest: int = 1, linksFilter: bool = False) -> tuple[Any, Any]:
-        if told is None:
-            told = self.lastSid
+        if toId is None:
+            toId = self.lastSid
         return self._request('message/history', {
             "linksFilter": linksFilter, "latest": latest,
-            "told": told, "limit": limit, "talkers": [{"account": talkers}]
+            "toId": toId, "limit": limit, "talkers": [{"account": talkers}]
         })
 
     def messageLinksHistory(self, talkers: str,
@@ -330,6 +335,44 @@ class MangoBot:
     def chatRemoveChannel(self, chat_id: str) -> tuple[Any, Any]:
         return self._request('chat/removeChannel', {"account": chat_id})
 
+    def webchatHistoryGet(self, talkers: list[dict], toId: str, limit: int, latest: int = 1) -> tuple[Any, Any]:
+        return self._request('webchat/history/get', {
+            "talkers": talkers, "toId": toId, "limit": limit, "latest": latest
+        })
+
+    def webchatHistorySync(self, sinceId: str, limit: int) -> tuple[Any, Any]:
+        return self._request('webchat/history/get', {"sinceId": sinceId, "limit": limit})
+
+    def webchatTakeOver(self, chat_id: str) -> tuple[Any, Any]:
+        return self._request('webchat/takeover', {"account": chat_id})
+
+    def webchatNotifyRead(self, chat_id: str, sid: str) -> tuple[Any, Any]:
+        return self._request('webchat/notifyRead', {
+            "account": chat_id, "sid": sid
+        })
+
+    def webchatNotifyTyping(self, chat_id: str, finished: bool) -> tuple[Any, Any]:
+        return self._request('webchat/notifyRead', {
+            "to": chat_id, "finished": finished
+        })
+
+    def webchatSend(self, chat_id: str, payload: dict, messageType: str) -> tuple[Any, Any]:
+        return self._request('webchat/send', {"messages": [messageCreate(chat_id, payload, messageType, None)]})
+
+    def webchatFactoryAddToBuffer(self, chat_id: str, payload: dict, messageType: str, replyTo: str = None):
+        self.webchatFactoryBuffer.append(messageCreate(chat_id, payload, messageType, replyTo))
+
+    def webchatFactoryBasicText(self, chat_id: str, text: str):
+        self.webchatFactoryAddToBuffer(chat_id=chat_id, payload={"body": text}, messageType="text")
+
+    def webchatFactoryClearBuffer(self):
+        self.webchatFactoryBuffer = []
+
+    def webchatFactorySend(self) -> tuple[Any, Any]:
+        result: tuple[Any, Any] = self._request('webchat/send', {"messages": self.webchatFactoryBuffer})
+        self.webchatFactoryClearBuffer()
+        return result
+
     def bookSrcList(self, product_id: str):
         return self._request('src/list', {"product_id": product_id},
                              url=self.addressBookUrl, headers={"X-AUTH-TOKEN": self.authToken})
@@ -375,8 +418,8 @@ class MangoBot:
             "tm_valid_until": tmValidUntil, "auth_token": self.authToken
         }, url=self.apiVksUrl)
 
-    def addEventHandler(self, regexp: str, func):
-        self.handlersDict.append({'regexp': regexp, 'function': func})
+    def addEventHandler(self, eventType: str, regexp: str, func):
+        self.handlersDict.append({'eventType': eventType, 'regexp': regexp, 'function': func})
 
     def addRmqCallbackFunction(self, func):
         self.RmqCallbackFunction.append(func)
@@ -396,13 +439,11 @@ class MangoBot:
 
     def eventHandle(self, event):
         self.logger.info(event)
-        if eventCheck(event):
-            self.logger.info(f'Account: {event.message.account}')
-            logger.info(f"User: {self.findUserById(event.message.account)}, text: {event.message.payload.body}")
-            for func in self.handlersDict:
+        for func in self.handlersDict:
+            if eventCheck(event, func['eventType']):
                 self.matchFuncRegExpToEventBody(func, event)
-        else:
-            pass
+            else:
+                pass
 
     def endlessCycle(self):
         while True:
