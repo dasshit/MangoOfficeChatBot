@@ -1,0 +1,16 @@
+{
+    "logStrings": {
+        "requestLog": "Pending request - URL {}, request body {}",
+        "failedResponseLog": "Status code {}, response headers {}, body {}",
+        "successResponseLog": "Status code {}, response headers {}"
+    },
+    "urls": {
+        "authUrl": "https://auth.mango-office.ru/",
+        "chatApiUrl": "https://chatapi.mango-office.ru/",
+        "clientApiUrl": "https://clientapi.mango-office.ru/",
+        "chatFsUrl": "https://chatfs.mango-office.ru/",
+        "apiVksUrl": "https://apivks.mango-office.ru/",
+        "addressBookUrl": "https://ab.mango-office.ru/"
+    },
+    "userAgent": "PyCharmBot-{}"
+}
