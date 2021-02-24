@@ -5,6 +5,12 @@ from typing import *
 
 
 def de__json(json_object: str, name: str) -> tuple[Any, Any]:
+    """
+    Упаковка сообщений в namedtuple
+    :param json_object: словарь
+    :param name: название namedtuple
+    :return: namedtuple
+    """
 
     def convertToNamedTuple(d):
         body = ''
@@ -37,4 +43,4 @@ names = [
 
 
 with open('config.json', 'r') as f:
-    config = de__json(f.read(), 'Config')
+    config = de__json(f.read(), 'Config')  # Читаем конфиг
