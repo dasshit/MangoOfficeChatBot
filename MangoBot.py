@@ -420,7 +420,8 @@ class MangoBot:
     def messageFactorySend(self) -> tuple[Any, Any]:
         """
         Отправка сообщений из буффера и его очистка
-        Так как в запросе на отправку сообщений сами сообщения указываются списком - создал два метода (для единичной отправки и для массовой)
+        Так как в запросе на отправку сообщений сами сообщения указываются списком - создал два метода
+        (для единичной отправки и для массовой)
         """
         result: tuple[Any, Any] = self._request('message/send', {"messages": self.messageFactoryBuffer})
         self.messageFactoryClearBuffer()
@@ -590,7 +591,7 @@ class MangoBot:
         """
         return self._request('chat/modify', {"account": chat_id, "add": add, "remove": remove})
 
-    def chatSetUserAdminRole(self, chat_id: str, user: Optional[str, list]) -> tuple[Any, Any]:
+    def chatSetUserAdminRole(self, chat_id: str, user: Optional[str]) -> tuple[Any, Any]:
         """
         Дать админские права сотруднику в группе/канале
         :param chat_id: ID группы/канала
@@ -897,7 +898,8 @@ class MangoBot:
 
     def start(self):
         """
-        Старт внешних процессов для работы с внешними триггерами (например, отправка сообщений при получении внешних триггеров)
+        Старт внешних процессов для работы с внешними триггерами
+        (например, отправка сообщений при получении внешних триггеров)
         :return:
         """
         for rmqFunction in self.RmqCallbackFunction:
