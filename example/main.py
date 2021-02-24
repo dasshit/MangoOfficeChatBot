@@ -2,8 +2,8 @@ from uuid import uuid4
 from os import environ
 from MangoBot import MangoBot
 
-environ.setdefault('login', 'LOGIN')  # Здесь указываем логин
-environ.setdefault('password', 'PASSWORD')  # Пароль
+environ.setdefault('login', 'user25@masha.mangosip.ru')  # Здесь указываем логин
+environ.setdefault('password', 'xS1KeBnd')  # Пароль
 
 
 def test(self, event):  # Тестовая функция для обработки входящих сообщений (Эхо бот)

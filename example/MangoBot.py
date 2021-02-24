@@ -3,7 +3,6 @@ from time import sleep
 from re import search
 import random as rnd
 from base64 import b64encode
-from loguru import logger
 from uuid import uuid4
 from typing import *
 from datetime import datetime
@@ -11,6 +10,42 @@ from re import match
 from multiprocessing import Process
 from configReader import config, de__json
 from os import environ
+from loguru import logger
+
+
+def result_logger(self, response):
+    if response.status_code != 200:
+        self.logger.exception(failedResponseLog.format(response.status_code, response.headers, response.text))
+    else:
+        self.logger.info(successResponseLog.format(response.status_code, response.headers))
+
+
+def post_logger(decoratedProxyFunction):
+    def post_log(self, *args, **kwargs):
+        if kwargs.get('url'):
+            url = kwargs.get('url')
+        else:
+            url: str = config.urls.chatApiUrl
+        if not kwargs.get('headers'):
+            headers = self.header
+        else:
+            headers = kwargs.get('headers')
+        self.logger.info(requestLog.format(f'{url}{args[0]}', args[1]))
+        response = decoratedProxyFunction(self, *args, url=url, headers=headers)
+        classedJson = de__json(response.text, args[0])
+        self.response_logger(response)
+        return classedJson
+    return post_log
+
+
+def get_logger(decoratedProxyFunction):
+    def get_log(self, *args):
+        self.logger.info(requestLog.format(f'{self.fsUrl}{args[0]}', self.fsHeader))
+        response = decoratedProxyFunction(self, *args)
+        self.response_logger(response)
+        return de__json(response.text, args[0])
+    return get_log
+
 
 requestLog: str = config.logStrings.requestLog
 failedResponseLog: str = config.logStrings.failedResponseLog
@@ -58,38 +93,37 @@ def eventCheck(event, purposedEventType):
 
 
 class MangoBot:
-    __slots__ = ['authUrl', 'mainUrl', 'apiVksUrl', 'token', 'lastSid', 'UserAgent', 'login', 'password',
-                 'basic_token', 'fsUrl', 'roster', 'deviceId', 'header', 'fsHeader', 'logger', 'handlersDict',
-                 'authToken', 'uploadPath', 'clientApiUrl', 'clientApiKey', 'addressBookUrl', 'messageFactoryBuffer',
-                 'RmqCallbackFunction', 'webchatFactoryBuffer']
 
-    def __init__(self, login: str = environ.get('login'), password: str = environ.get('password'),
-                 authUrl: str = config.urls.authUrl, mainUrl: str = config.urls.chatApiUrl,
-                 fsUrl: str = config.urls.chatFsUrl, apiVksUrl: str = config.urls.apiVksUrl,
-                 clientApiUrl: str = config.urls.clientApiUrl, addressBookUrl: str = config.urls.addressBookUrl,
-                 UserAgent: str = config.userAgent.format(uuid4()), basic_token: str = None,
-                 lastSid: str = None, deviceId: str = None, roster: tuple[Any, Any] = None,
-                 header: dict = None, fsHeader: dict = None):
-        from loguru import logger
-        self.authUrl: str = authUrl
-        self.mainUrl: str = mainUrl
-        self.clientApiUrl: str = clientApiUrl
-        self.fsUrl: str = fsUrl
-        self.apiVksUrl: str = apiVksUrl
-        self.addressBookUrl: str = addressBookUrl
-        self.lastSid: str = lastSid
-        self.UserAgent: str = UserAgent
+    authUrl: str = config.urls.authUrl
+    mainUrl: str = config.urls.chatApiUrl
+    fsUrl: str = config.urls.chatFsUrl
+    clientApiUrl: str = config.urls.clientApiUrl
+    addressBookUrl: str = config.urls.addressBookUrl
+    apiVksUrl: str = config.urls.apiVksUrl
+    uploadPath: str = 'upload_chunk.php?toAccount={}&localId={}'
+
+    __slots__ = ['login', 'password',
+                 'token', 'basic_token', 'authToken', 'clientApiKey', 'deviceId', 'lastSid',
+                 'header', 'fsHeader',
+                 'UserAgent',
+                 'roster',
+                 'logger',
+                 'messageFactoryBuffer', 'webchatFactoryBuffer',
+                 'handlersDict', 'RmqCallbackFunction']
+
+    def __init__(self, login: str = environ.get('login'), password: str = environ.get('password')):
         self.login: str = login
         self.password: str = password
-        self.authToken: Optional[str, None] = None
-        self.clientApiKey: Optional[str, None] = None
-        self.basic_token: str = basic_token
-        self.roster: tuple[Any, Any] = roster
-        self.deviceId: str = deviceId
-        self.header: dict = header
-        self.fsHeader: dict = fsHeader
+        self.lastSid: str = ''
+        self.UserAgent: str = config.userAgent.format(uuid4())
+        self.authToken: str = ''
+        self.clientApiKey: str = ''
+        self.basic_token: str = ''
+        self.roster: tuple[Any, Any] = ()
+        self.deviceId: str = ''
+        self.header: dict = {}
+        self.fsHeader: dict = {}
         self.logger: logger = logger
-        self.uploadPath: str = '/upload_chunk.php?toAccount={}&localId={}'
         self.messageFactoryBuffer: list[dict] = []
         self.webchatFactoryBuffer: list[dict] = []
         self.handlersDict: list[dict] = []
@@ -117,7 +151,12 @@ class MangoBot:
             'Authorization': f"Basic {b64encode(f'{account}:{hashing}'.encode('ascii')).decode('ascii')}",
             'User-Agent': self.UserAgent
         }
+        self.fsHeader = {
+            'Authorization': self.header['Authorization'], 'Content-Type': 'application/octet-stream',
+            'Content-Disposition': 'attachment; filename="{0}"'
+        }
 
+    @post_logger
     def _request(self, *args, url: str = config.urls.chatApiUrl, headers: dict = ()) -> tuple[Any, Any]:
         """
         Прослойка для основного количества запросов: логирование + создание из response = namedtuple
@@ -126,42 +165,22 @@ class MangoBot:
         :param headers: в случае если запрос идет к другому домену - передаем другие заголовки
         :return: результат запроса в виде namedtuple
         """
-        if not headers:
-            headers = self.header
-        if self.logger is not None:
-            self.logger.info(requestLog.format(f'{url}{args[0]}', args[1]))
-        result: Response = post(f'{url}{args[0]}', headers=headers, json=args[1], timeout=(999, 30))
-        classDeJson: tuple[Any, Any] = de__json(result.text, args[0])
-        if self.logger is not None:
-            if result.status_code != 200:
-                self.logger.exception(failedResponseLog.format(result.status_code, result.headers, result.text))
-            else:
-                self.logger.info(successResponseLog.format(result.status_code, result.headers))
-        if args[0] == 'pollEvents':
-            self.lastSid: str = classDeJson.data.lastSid
-        else:
-            try:
-                for message in classDeJson.data:
-                    self.lastSid: str = message.sid
-            except Exception as error:
-                self.logger.debug(error)
-        return classDeJson
+        return post(f'{url}{args[0]}', headers=headers, json=args[1], timeout=(999, 30))
 
-    def _request_fs(self, *args):
+    @get_logger
+    def _request_fs(self, *args) -> tuple[Any, Any]:
         """
         Прослайка для запросов к ФХД MANGO OFFICE
         :param args: path + файл
         :return: результат запроса в виде namedtuple
         """
-        if self.logger is not None:
-            self.logger.info(requestLog.format(f'{self.fsUrl}{args[0]}', self.fsHeader))
-        result: Response = post(f'{self.fsUrl}{args[0]}', headers=self.fsHeader, data=args[1])
-        if self.logger is not None:
-            if result.status_code != 200:
-                self.logger.exception(failedResponseLog.format(result.status_code, result.headers, result.text))
-            else:
-                self.logger.info(successResponseLog.format(result.status_code, result.headers))
-        return de__json(result.text, args[0])
+        return post(f'{self.fsUrl}{args[0]}', headers=self.fsHeader, data=args[1])
+
+    def response_logger(self, response):
+        if response.status_code != 200:
+            self.logger.exception(failedResponseLog.format(response.status_code, response.headers, response.text))
+        else:
+            self.logger.info(successResponseLog.format(response.status_code, response.headers))
 
     def authVpbx(self):
         """
@@ -420,7 +439,8 @@ class MangoBot:
     def messageFactorySend(self) -> tuple[Any, Any]:
         """
         Отправка сообщений из буффера и его очистка
-        Так как в запросе на отправку сообщений сами сообщения указываются списком - создал два метода (для единичной отправки и для массовой)
+        Так как в запросе на отправку сообщений сами сообщения указываются списком - создал два метода
+        (для единичной отправки и для массовой)
         """
         result: tuple[Any, Any] = self._request('message/send', {"messages": self.messageFactoryBuffer})
         self.messageFactoryClearBuffer()
@@ -779,25 +799,19 @@ class MangoBot:
         return self.uploadPath.format(
             sender, localIdGenerator() + '&fax=1' if isFax else localIdGenerator())
 
-    def openAndUploadFile(self, sender, final_json, isFax: bool) -> tuple[Any, Any]:
+    def openAndUploadFile(self, sender: str, file: dict, isFax: bool = False) -> tuple[Any, Any]:
         """
         Отправка файла, переданного в виде словаря его характеристик
+        :param file: словарь вида {'filename': xxxx, 'path': xxxx}
         :param sender: кому отсылать
-        :param final_json: словарь вида {'filename': xxxx, 'path': xxxx}
         :param isFax: если нужно отправить как факс
         :return: результат запроса в виде namedtuple
         """
-        if self.fsHeader is None:
-            self.fsHeader = {
-                'Authorization': self.token, 'Content-Type': 'application/octet-stream',
-                'Content-Disposition': 'attachment; filename="{0}"'.format(final_json['filename'])
-            }
-        else:
-            self.fsHeader['Content-Disposition'] = 'attachment; filename="{0}"'.format(final_json['filename'])
-        with open('{}{}'.format(final_json['path'], final_json['filename']), 'rb') as f:
+        self.fsHeader['Content-Disposition'] = self.fsHeader['Content-Disposition'].format(file['filename'])
+        with open('{}{}'.format(file['path'], file['filename']), 'rb') as f:
             return self._request_fs(self.pathFormat(sender, isFax=isFax), f.read())
 
-    def uploadBytesIOFile(self, sender, file_io, isFax: bool) -> tuple[Any, Any]:
+    def uploadBytesIOFile(self, sender, file_io, isFax: bool = False) -> tuple[Any, Any]:
         """
         Отправка файла, переданного в виде объекта BytesIO
         :param sender: кому отсылать
@@ -805,13 +819,7 @@ class MangoBot:
         :param isFax: если нужно отправить как факс
         :return: результат запроса в виде namedtuple
         """
-        if self.fsHeader is None:
-            self.fsHeader = {
-                'Authorization': self.token, 'Content-Type': 'application/octet-stream',
-                'Content-Disposition': 'attachment; filename="{0}"'.format(file_io.name)
-            }
-        else:
-            self.fsHeader['Content-Disposition'] = 'attachment; filename="{0}"'.format(file_io.name)
+        self.fsHeader['Content-Disposition'] = self.fsHeader['Content-Disposition'].format(file_io.name)
         return self._request_fs(self.pathFormat(sender, isFax=isFax), file_io)
 
     def createConfLink(self, tmValidUntil: float = datetime.now().timestamp() + 10800) -> tuple[Any, Any]:
@@ -847,11 +855,13 @@ class MangoBot:
         Получение событий
         :return:
         """
-        return self._request('pollEvents', {
+        classedJson = self._request('pollEvents', {
             'lastSid': self.lastSid
         })
+        self.lastSid = classedJson.data.lastSid
+        return classedJson
 
-    def matchFuncRegExpToEventBody(self, func: dict, event: tuple[Any, Any]):
+    def matchFuncRegExpToEventBody(self, func: dict, event: tuple[Any, Any]) -> bool:
         """
         Проверка содержания сообщения на соответствие регулярки у eventHandler
         :param func: словарь handler
@@ -861,11 +871,12 @@ class MangoBot:
         self.logger.info(f'Regexp: {func["regexp"]}, Function: {func["function"]}')
         if match(func['regexp'], event.message.payload.body):
             func['function'](self, event)
+            return True
         else:
             self.logger.debug('Not matched')
-            pass
+            return False
 
-    def eventHandle(self, event):
+    def eventHandle(self, event) -> bool:
         """
         Проверка событий на соответсвие типу для добавленного eventHandler и отправку в него
         :param event: событие
@@ -874,9 +885,10 @@ class MangoBot:
         self.logger.info(event)
         for func in self.handlersDict:
             if eventCheck(event, func['eventType']):
-                self.matchFuncRegExpToEventBody(func, event)
+                return self.matchFuncRegExpToEventBody(func, event)
             else:
                 pass
+        return False
 
     def endlessCycle(self):
         """
@@ -887,8 +899,7 @@ class MangoBot:
             try:
                 for event in self.pollEvents().data.history:
                     self.eventHandle(event)
-                if self.messageFactoryBuffer:
-                    self.messageFactorySend()
+                self.messageFactorySend() if self.messageFactoryBuffer else None
             except KeyboardInterrupt:
                 logger.info('Trying to stop polling...')
                 break
@@ -897,7 +908,8 @@ class MangoBot:
 
     def start(self):
         """
-        Старт внешних процессов для работы с внешними триггерами (например, отправка сообщений при получении внешних триггеров)
+        Старт внешних процессов для работы с внешними триггерами
+        (например, отправка сообщений при получении внешних триггеров)
         :return:
         """
         for rmqFunction in self.RmqCallbackFunction:

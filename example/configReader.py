@@ -11,6 +11,8 @@ def de__json(json_object: str, name: str) -> tuple[Any, Any]:
     :param name: название namedtuple
     :return: namedtuple
     """
+    if name[:6] == 'upload':
+        name = name[:6]
 
     def convertToNamedTuple(d):
         body = ''
