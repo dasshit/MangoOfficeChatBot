@@ -6,7 +6,7 @@ h2==3.2.0
 hpack==3.0.0
 http3==0.6.7
 httpcore==0.12.3
-httpx==0.16.1
+httpx==0.23.0
 hyperframe==5.2.0
 idna==2.10
 loguru==0.5.3
